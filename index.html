@@ -3,16 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>A-Frame + MediaPipe 推しタッチAR</title>
+  <title>WebAR 物理ボクシング</title>
   
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
   <style>
     body { margin: 0; overflow: hidden; }
-    /* 外カメラにするため、鏡面反転（scaleX(-1)）を削除しました */
     #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
     .a-canvas { z-index: 1; }
   </style>
@@ -22,16 +20,12 @@
   <video id="webcam" autoplay playsinline></video>
 
   <a-scene vr-mode-ui="enabled: false" embedded>
-    <a-assets>
-      <a-asset-item id="avatar" src="chara.glb"></a-asset-item>
-    </a-assets>
-
-    <a-entity id="my-character" 
-              gltf-model="#avatar" 
-              position="0 -0.5 -2" 
-              scale="0.15 0.15 0.15"
-              animation-mixer="clip: idle; loop: repeat">
-    </a-entity>
+    <a-box id="target-box" 
+           position="0 0 -2" 
+           rotation="0 45 0" 
+           width="0.4" height="0.4" depth="0.4" 
+           color="#FF3366">
+    </a-box>
 
     <a-entity light="type: ambient; intensity: 0.9;"></a-entity>
     <a-entity light="type: directional; intensity: 0.6;" position="1 2 1"></a-entity>
@@ -40,12 +34,16 @@
 
   <script>
     const videoElement = document.getElementById('webcam');
-    const character = document.getElementById('my-character');
-    let isTouching = false;
+    const boxElement = document.getElementById('target-box');
 
-    // キャラのスケールに合わせて、判定用の座標も調整
-    const charPos = { x: 0, y: -0.5, z: -2 }; 
+    // 箱の初期状態（位置と、吹っ飛ぶ速度）
+    let boxPos = { x: 0, y: 0, z: -2 };
+    let boxVelocity = { x: 0, y: 0, z: 0 }; // 飛んでいく速度（ベクトル）
 
+    // 1フレーム前の手の位置を記憶して、パンチの「速度」を計算するための変数
+    let lastHandPos = { x: 0, y: 0 };
+
+    // MediaPipe Hands の初期化
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -53,51 +51,39 @@
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
     });
 
+    // 手が認識されたときの処理（メインループ）
     hands.onResults((results) => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
-        const indexTip = landmarks[8];
+        const indexTip = landmarks[8]; // 人差し指の先
 
-        // 外カメラ用にX軸の計算を修正
-        const handX = (indexTip.x - 0.5) * 4; 
-        const handY = (0.5 - indexTip.y) * 3;
-        const handZ = -2; 
+        // 画面内の指の座標を、A-Frameの空間の座標（メートル）に変換
+        const handX = (indexTip.x - 0.5) * 3; 
+        const handY = (0.5 - indexTip.y) * 2;
 
-        const dx = handX - charPos.x;
-        const dy = handY - charPos.y;
-        const dz = handZ - charPos.z;
-        const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        // 【パンチの速度を計算】 現フレームの座標 - 前フレームの座標
+        const speedX = handX - lastHandPos.x;
+        const speedY = handY - lastHandPos.y;
 
-        // 少し近づけやすくするために判定距離を 0.3（30cm）に調整
-        if (distance < 0.3) {
-          if (!isTouching) {
-            isTouching = true;
-            console.log("タッチされました！");
-            character.setAttribute('animation-mixer', 'clip: react; loop: once; clampWhenFinished: true');
-          }
-        } else {
-          if (isTouching) {
-            isTouching = false;
-            character.setAttribute('animation-mixer', 'clip: idle; loop: repeat');
-          }
+        // 【当たり判定】指先と箱の距離を計算（2次元平面＋簡易的な奥行き）
+        const dx = handX - boxPos.x;
+        const dy = handY - boxPos.y;
+        const distance = Math.sqrt(dx*dx + dy*dy);
+
+        // 指先が箱のサイズ内（約25cm以内）に入ったら衝突！
+        if (distance < 0.25) {
+          // 手が動いた方向に、速度（パワー）を上書きする
+          // 勢いよく動かすほど、箱が激しくすっ飛ぶようになります
+          boxVelocity.x = speedX * 8; 
+          boxVelocity.y = speedY * 8;
+          boxVelocity.z = -5; // パンチしたら奥に向かって吹っ飛ぶようにする
         }
+
+        // 今の手の位置を保存（次のフレームの計算用）
+        lastHandPos = { x: handX, y: handY };
       }
     });
-
-    // 【修正点】facingMode: 'environment' を追加して外カメラを強制起動
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({image: videoElement});
-      },
-      width: 1280,
-      height: 720,
-      facingMode: 'environment'
-    });
-    camera.start();
-  </script>
-</body>
-</html>
