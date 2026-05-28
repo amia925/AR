@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebAR 物理ボクシング</title>
+  <title>WebAR 3D空間ペイント</title>
   
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -11,38 +11,33 @@
 
   <style>
     body { margin: 0; overflow: hidden; }
+    /* 最もエラーが起きにくい方法で背面カメラを画面いっぱいに広げます */
     #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
     .a-canvas { z-index: 1; }
+    /* 画面リセット用のボタン */
+    #clear-btn {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 10; padding: 12px 24px; background: #FF3366; color: white;
+      border: none; border-radius: 25px; font-size: 16px; font-weight: bold;
+    }
   </style>
 </head>
 <body>
 
   <video id="webcam" autoplay playsinline></video>
+  <button id="clear-btn" onclick="clearPaint()">画面をクリア</button>
 
   <a-scene vr-mode-ui="enabled: false" embedded>
-    <a-box id="target-box" 
-           position="0 0 -2" 
-           rotation="0 45 0" 
-           width="0.4" height="0.4" depth="0.4" 
-           color="#FF3366">
-    </a-box>
+    <a-entity id="paint-container"></a-entity>
 
-    <a-entity light="type: ambient; intensity: 0.9;"></a-entity>
-    <a-entity light="type: directional; intensity: 0.6;" position="1 2 1"></a-entity>
+    <a-entity light="type: ambient; intensity: 1.0;"></a-entity>
     <a-entity camera position="0 0 0"></a-entity>
   </a-scene>
 
   <script>
     const videoElement = document.getElementById('webcam');
-    const boxElement = document.getElementById('target-box');
-
-    // 箱の初期状態（位置と、吹っ飛ぶ速度）
-    let boxPos = { x: 0, y: 0, z: -2 };
-    let boxVelocity = { x: 0, y: 0, z: 0 }; // 飛んでいく速度（ベクトル）
-
-    // 1フレーム前の手の位置を記憶して、パンチの「速度」を計算するための変数
-    let lastHandPos = { x: 0, y: 0 };
-
+    const container = document.getElementById('paint-container');
+    
     // MediaPipe Hands の初期化
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -51,39 +46,64 @@
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6
+      minDetectionConfidence: 0.5, // 少し認識を優しくして反応しやすくしました
+      minTrackingConfidence: 0.5
     });
 
-    // 手が認識されたときの処理（メインループ）
+    // 手が認識されたときの処理（指の軌跡に球体を置いていく）
     hands.onResults((results) => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
         const indexTip = landmarks[8]; // 人差し指の先
 
-        // 画面内の指の座標を、A-Frameの空間の座標（メートル）に変換
+        // 指の画面内座標をA-Frameの3D空間の座標（メートル）に変換
         const handX = (indexTip.x - 0.5) * 3; 
         const handY = (0.5 - indexTip.y) * 2;
+        const handZ = -1.5; // カメラの手前 1.5メートルの位置に描く
 
-        // 【パンチの速度を計算】 現フレームの座標 - 前フレームの座標
-        const speedX = handX - lastHandPos.x;
-        const speedY = handY - lastHandPos.y;
+        // 【ペイント処理】新しく小さな光る球体（点）を作って空間に配置する
+        const dot = document.createElement('a-sphere');
+        dot.setAttribute('position', `${handX} ${handY} ${handZ}`);
+        dot.setAttribute('radius', '0.02'); // 直径4cmの小さな点
+        dot.setAttribute('color', '#33FFFF'); // ネオンブルー
+        dot.setAttribute('material', 'shader: flat; json: true'); // 光っているように見える設定
+        
+        // 画面に点を追加
+        container.appendChild(dot);
 
-        // 【当たり判定】指先と箱の距離を計算（2次元平面＋簡易的な奥行き）
-        const dx = handX - boxPos.x;
-        const dy = handY - boxPos.y;
-        const distance = Math.sqrt(dx*dx + dy*dy);
-
-        // 指先が箱のサイズ内（約25cm以内）に入ったら衝突！
-        if (distance < 0.25) {
-          // 手が動いた方向に、速度（パワー）を上書きする
-          // 勢いよく動かすほど、箱が激しくすっ飛ぶようになります
-          boxVelocity.x = speedX * 8; 
-          boxVelocity.y = speedY * 8;
-          boxVelocity.z = -5; // パンチしたら奥に向かって吹っ飛ぶようにする
+        // 点が増えすぎると重くなるので、300個を超えたら古いものから消す
+        if (container.children.length > 300) {
+          container.removeChild(container.firstChild);
         }
-
-        // 今の手の位置を保存（次のフレームの計算用）
-        lastHandPos = { x: handX, y: handY };
       }
     });
+
+    // 画面をクリアする関数
+    function clearPaint() {
+      container.innerHTML = '';
+    }
+
+    // エラーが起きにくい標準的なカメラ起動処理（外カメラを最優先）
+    navigator.mediaDevices.getUserMedia({ 
+      video: { 
+        facingMode: 'environment',
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      } 
+    })
+    .then((stream) => {
+      videoElement.srcObject = stream;
+      videoElement.onloadedmetadata = () => {
+        // 1秒間に30回、カメラ映像をMediaPipeに送って処理する
+        setInterval(async () => {
+          await hands.send({image: videoElement});
+        }, 1000 / 30);
+      };
+    })
+    .catch((err) => {
+      alert("カメラの起動に失敗しました。ブラウザの設定でカメラを許可してください。");
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
