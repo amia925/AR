@@ -7,14 +7,13 @@
   
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
-
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
   <style>
-    /* カメラ映像を画面いっぱいに背景として表示する設定 */
     body { margin: 0; overflow: hidden; }
-    #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; transform: scaleX(-1); }
+    /* 外カメラにするため、鏡面反転（scaleX(-1)）を削除しました */
+    #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
     .a-canvas { z-index: 1; }
   </style>
 </head>
@@ -29,14 +28,13 @@
 
     <a-entity id="my-character" 
               gltf-model="#avatar" 
-              position="0 0 -3" 
-              scale="1 1 1"
+              position="0 -0.5 -2" 
+              scale="0.15 0.15 0.15"
               animation-mixer="clip: idle; loop: repeat">
     </a-entity>
 
-    <a-entity light="type: ambient; intensity: 0.8;"></a-entity>
-    <a-entity light="type: directional; intensity: 0.5;" position="1 2 1"></a-entity>
-
+    <a-entity light="type: ambient; intensity: 0.9;"></a-entity>
+    <a-entity light="type: directional; intensity: 0.6;" position="1 2 1"></a-entity>
     <a-entity camera position="0 0 0"></a-entity>
   </a-scene>
 
@@ -45,53 +43,43 @@
     const character = document.getElementById('my-character');
     let isTouching = false;
 
-    // キャラクターの座標（今回は固定値ですが、手を近づける基準になります）
-    const charPos = { x: 0, y: 0, z: -3 }; 
+    // キャラのスケールに合わせて、判定用の座標も調整
+    const charPos = { x: 0, y: -0.5, z: -2 }; 
 
-    // MediaPipe Hands の初期化と設定
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
     hands.setOptions({
-      maxNumHands: 1,           // 認識する手は片手だけ
-      modelComplexity: 1,       // 認識の精度（1で十分軽量かつ正確）
-      minDetectionConfidence: 0.7, // 手を見つける基準の厳しさ
-      minTrackingConfidence: 0.7   // 手を追いかける基準の厳しさ
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
     });
 
-    // 手が認識されたときに毎回実行されるループ処理
     hands.onResults((results) => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
-        
-        // 人差し指の指先（INDEX_FINGER_TIP）は「8番」のデータに入っています
         const indexTip = landmarks[8];
 
-        // MediaPipeの座標（0.0〜1.0）を、A-Frameの3D空間の座標（メートル単位）に簡易変換
-        // カメラからの距離（Z軸）は、手の大きさなどから推測して今回は簡易的に固定、または計算します
-        const handX = (indexTip.x - 0.5) * -4; // 反転を考慮
+        // 外カメラ用にX軸の計算を修正
+        const handX = (indexTip.x - 0.5) * 4; 
         const handY = (0.5 - indexTip.y) * 3;
-        const handZ = -3; // キャラの奥行きに合わせる
+        const handZ = -2; 
 
-        // 3次元の距離の計算（三平方の定理： $d = \sqrt{\Delta x^2 + \Delta y^2 + \Delta z^2}$）
         const dx = handX - charPos.x;
         const dy = handY - charPos.y;
         const dz = handZ - charPos.z;
         const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
-        // 距離が 0.4メートル（40cm）以内になったら「触れた」と判定
-        if (distance < 0.4) {
+        // 少し近づけやすくするために判定距離を 0.3（30cm）に調整
+        if (distance < 0.3) {
           if (!isTouching) {
             isTouching = true;
             console.log("タッチされました！");
-            // キャラクターのアニメーションを「照れる/反応する（react）」に変更
             character.setAttribute('animation-mixer', 'clip: react; loop: once; clampWhenFinished: true');
-            
-            // （オプション）ここに効果音を鳴らす処理を足すことも可能
           }
         } else {
-          // 手が離れたら元に戻す
           if (isTouching) {
             isTouching = false;
             character.setAttribute('animation-mixer', 'clip: idle; loop: repeat');
@@ -100,13 +88,14 @@
       }
     });
 
-    // スマホのWebカメラを起動してMediaPipeに流し込む
+    // 【修正点】facingMode: 'environment' を追加して外カメラを強制起動
     const camera = new Camera(videoElement, {
       onFrame: async () => {
         await hands.send({image: videoElement});
       },
       width: 1280,
-      height: 720
+      height: 720,
+      facingMode: 'environment'
     });
     camera.start();
   </script>
