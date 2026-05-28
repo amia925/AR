@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3D Space Paint AR</title>
+  <title>3D Space Paint AR - Debug</title>
   
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -11,22 +11,26 @@
 
   <style>
     body { margin: 0; overflow: hidden; background-color: #111; font-family: sans-serif; }
-    /* カメラ映像を画面いっぱいに広げる */
     #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
     .a-canvas { z-index: 1; }
     
-    /* 画面タップを促すスタート案内画面 */
     #start-overlay {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0,0,0,0.7); z-index: 100; display: flex;
+      background: rgba(0,0,0,0.8); z-index: 100; display: flex;
       flex-direction: column; justify-content: center; align-items: center; color: white;
     }
     #start-btn {
       padding: 15px 30px; background: #00FFCC; color: #111; border: none;
-      border-radius: 30px; font-size: 18px; font-weight: bold; cursor: pointer;
+      border-radius: 30px; font-size: 18px; font-weight: bold;
     }
 
-    /* 画面リセット用のボタン */
+    /* 【追加】スマホの画面上でAIが動いているか確認するためのデバッグ黒帯 */
+    #debug-status {
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      background: rgba(0,0,0,0.7); color: #00FFCC; padding: 8px 12px;
+      border-radius: 5px; font-size: 14px; font-family: monospace;
+    }
+
     #clear-btn {
       position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
       z-index: 10; padding: 12px 24px; background: #FF3366; color: white;
@@ -37,16 +41,17 @@
 <body>
 
   <div id="start-overlay">
-    <p style="font-size: 18px; margin-bottom: 20px;">外カメラでARペイントを開始します</p>
-    <button id="start-btn" onclick="initAR()">画面をタップしてスタート</button>
+    <p style="font-size: 16px; margin-bottom: 20px;">外カメラでARペイントを開始します</p>
+    <button id="start-btn" onclick="initAR()">タップしてスタート</button>
   </div>
+
+  <div id="debug-status">ステータス: 起動を待っています...</div>
 
   <video id="webcam" autoplay playsinline></video>
   <button id="clear-btn" onclick="clearPaint()">画面をクリア</button>
 
   <a-scene vr-mode-ui="enabled: false" embedded>
     <a-entity id="paint-container"></a-entity>
-    
     <a-entity light="type: ambient; intensity: 1.0;"></a-entity>
     <a-entity camera position="0 0 0"></a-entity>
   </a-scene>
@@ -56,76 +61,80 @@
     const container = document.getElementById('paint-container');
     const overlay = document.getElementById('start-overlay');
     const clearBtn = document.getElementById('clear-btn');
+    const statusText = document.getElementById('debug-status');
     
     // MediaPipe Hands の初期化
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
+    // 認識の感度を極限（0.3）まで下げて、どんな手でも見つけるように設定
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5, // 認識の判定を甘くして、サクサク描けるように調整
-      minTrackingConfidence: 0.5
+      modelComplexity: 0, // 高速化モード（スマホが重くなるのを防ぐ）
+      minDetectionConfidence: 0.3, 
+      minTrackingConfidence: 0.3
     });
 
-    // 手が認識されたときの処理（指の軌跡に球体を配置）
+    // 手が認識されたときの処理
     hands.onResults((results) => {
+      // AI自体が毎フレーム動いている証拠として「システム稼働中」と点滅させる
+      statusText.innerText = "ステータス: 手を探しています🔍";
+
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        // 手が見つかったら画面上の文字を変える
+        statusText.innerText = "ステータス: 手を検出中！描画しています描画しています✍️";
+
         const landmarks = results.multiHandLandmarks[0];
         const indexTip = landmarks[8]; // 人差し指の先
 
-        // 画面内の指の座標を、A-Frameの3D空間の座標（メートル）に変換
-        const handX = (indexTip.x - 0.5) * 3; 
-        const handY = (0.5 - indexTip.y) * 2;
-        const handZ = -1.2; // カメラの手前 1.2メートルの位置に描く
+        // 座標計算を調整（カメラの画角に収まりやすいように少し狭く変換）
+        const handX = (indexTip.x - 0.5) * 2; 
+        const handY = (0.5 - indexTip.y) * 1.5;
+        const handZ = -1.0; // 少し手前（1メートル）に出現させて見失いにくくする
 
-        // 新しく小さな光る球体（点）を作って空間に配置する
+        // 球体を作って追加
         const dot = document.createElement('a-sphere');
         dot.setAttribute('position', `${handX} ${handY} ${handZ}`);
-        dot.setAttribute('radius', '0.015'); // 直径3cmの小さく綺麗な点
-        dot.setAttribute('color', '#00FFCC'); // サイバーなネオンブルー
-        dot.setAttribute('material', 'shader: flat'); // 影の影響を受けずに発光して見える設定
+        dot.setAttribute('radius', '0.02'); 
+        dot.setAttribute('color', '#00FFCC'); 
+        dot.setAttribute('material', 'shader: flat'); 
         
         container.appendChild(dot);
 
-        // 点が増えすぎてスマホが重くなるのを防ぐ（最大500個）
-        if (container.children.length > 500) {
+        if (container.children.length > 300) {
           container.removeChild(container.firstChild);
         }
       }
     });
 
-    // 画面タップ時に一斉にカメラとAIを起動する関数
     function initAR() {
-      // 案内画面を消して、クリアボタンを出す
       overlay.style.display = 'none';
       clearBtn.style.display = 'block';
+      statusText.innerText = "ステータス: カメラを起動中...";
 
-      // カメラと動画ストリームの開始
       navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment', // 強制的に外カメラ
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        } 
+        video: { facingMode: 'environment', width: 640, height: 480 } // 解像度を少し下げてAIの処理を爆速にする
       })
       .then((stream) => {
         videoElement.srcObject = stream;
         videoElement.onloadedmetadata = () => {
-          // 映像が届いたら、1秒間に30回MediaPipeに処理を送るループを開始
+          statusText.innerText = "ステータス: AIシステム起動中...";
+          
+          // 安定してフレームを送り出すためのループ
           setInterval(async () => {
-            await hands.send({image: videoElement});
-          }, 1000 / 30);
+            if (!videoElement.paused && !videoElement.ended) {
+              await hands.send({image: videoElement});
+            }
+          }, 40); // 秒間25フレームで処理
         };
       })
       .catch((err) => {
-        alert("カメラの起動に失敗しました。ブラウザの設定でカメラ利用を許可してください。");
-        console.error(err);
+        statusText.innerText = "エラー: カメラ起動失敗";
+        alert("カメラの許可が必要です");
       });
     }
 
-    // 画面をクリアする関数
     function clearPaint() {
       container.innerHTML = '';
     }
