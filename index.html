@@ -3,33 +3,50 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebAR 3D空間ペイント</title>
+  <title>3D Space Paint AR</title>
   
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
   <style>
-    body { margin: 0; overflow: hidden; }
-    /* 最もエラーが起きにくい方法で背面カメラを画面いっぱいに広げます */
+    body { margin: 0; overflow: hidden; background-color: #111; font-family: sans-serif; }
+    /* カメラ映像を画面いっぱいに広げる */
     #webcam { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
     .a-canvas { z-index: 1; }
+    
+    /* 画面タップを促すスタート案内画面 */
+    #start-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.7); z-index: 100; display: flex;
+      flex-direction: column; justify-content: center; align-items: center; color: white;
+    }
+    #start-btn {
+      padding: 15px 30px; background: #00FFCC; color: #111; border: none;
+      border-radius: 30px; font-size: 18px; font-weight: bold; cursor: pointer;
+    }
+
     /* 画面リセット用のボタン */
     #clear-btn {
-      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
       z-index: 10; padding: 12px 24px; background: #FF3366; color: white;
-      border: none; border-radius: 25px; font-size: 16px; font-weight: bold;
+      border: none; border-radius: 25px; font-size: 16px; font-weight: bold; display: none;
     }
   </style>
 </head>
 <body>
+
+  <div id="start-overlay">
+    <p style="font-size: 18px; margin-bottom: 20px;">外カメラでARペイントを開始します</p>
+    <button id="start-btn" onclick="initAR()">画面をタップしてスタート</button>
+  </div>
 
   <video id="webcam" autoplay playsinline></video>
   <button id="clear-btn" onclick="clearPaint()">画面をクリア</button>
 
   <a-scene vr-mode-ui="enabled: false" embedded>
     <a-entity id="paint-container"></a-entity>
-
+    
     <a-entity light="type: ambient; intensity: 1.0;"></a-entity>
     <a-entity camera position="0 0 0"></a-entity>
   </a-scene>
@@ -37,6 +54,8 @@
   <script>
     const videoElement = document.getElementById('webcam');
     const container = document.getElementById('paint-container');
+    const overlay = document.getElementById('start-overlay');
+    const clearBtn = document.getElementById('clear-btn');
     
     // MediaPipe Hands の初期化
     const hands = new Hands({
@@ -46,64 +65,70 @@
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5, // 少し認識を優しくして反応しやすくしました
+      minDetectionConfidence: 0.5, // 認識の判定を甘くして、サクサク描けるように調整
       minTrackingConfidence: 0.5
     });
 
-    // 手が認識されたときの処理（指の軌跡に球体を置いていく）
+    // 手が認識されたときの処理（指の軌跡に球体を配置）
     hands.onResults((results) => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
         const indexTip = landmarks[8]; // 人差し指の先
 
-        // 指の画面内座標をA-Frameの3D空間の座標（メートル）に変換
+        // 画面内の指の座標を、A-Frameの3D空間の座標（メートル）に変換
         const handX = (indexTip.x - 0.5) * 3; 
         const handY = (0.5 - indexTip.y) * 2;
-        const handZ = -1.5; // カメラの手前 1.5メートルの位置に描く
+        const handZ = -1.2; // カメラの手前 1.2メートルの位置に描く
 
-        // 【ペイント処理】新しく小さな光る球体（点）を作って空間に配置する
+        // 新しく小さな光る球体（点）を作って空間に配置する
         const dot = document.createElement('a-sphere');
         dot.setAttribute('position', `${handX} ${handY} ${handZ}`);
-        dot.setAttribute('radius', '0.02'); // 直径4cmの小さな点
-        dot.setAttribute('color', '#33FFFF'); // ネオンブルー
-        dot.setAttribute('material', 'shader: flat; json: true'); // 光っているように見える設定
+        dot.setAttribute('radius', '0.015'); // 直径3cmの小さく綺麗な点
+        dot.setAttribute('color', '#00FFCC'); // サイバーなネオンブルー
+        dot.setAttribute('material', 'shader: flat'); // 影の影響を受けずに発光して見える設定
         
-        // 画面に点を追加
         container.appendChild(dot);
 
-        // 点が増えすぎると重くなるので、300個を超えたら古いものから消す
-        if (container.children.length > 300) {
+        // 点が増えすぎてスマホが重くなるのを防ぐ（最大500個）
+        if (container.children.length > 500) {
           container.removeChild(container.firstChild);
         }
       }
     });
 
+    // 画面タップ時に一斉にカメラとAIを起動する関数
+    function initAR() {
+      // 案内画面を消して、クリアボタンを出す
+      overlay.style.display = 'none';
+      clearBtn.style.display = 'block';
+
+      // カメラと動画ストリームの開始
+      navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment', // 強制的に外カメラ
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      })
+      .then((stream) => {
+        videoElement.srcObject = stream;
+        videoElement.onloadedmetadata = () => {
+          // 映像が届いたら、1秒間に30回MediaPipeに処理を送るループを開始
+          setInterval(async () => {
+            await hands.send({image: videoElement});
+          }, 1000 / 30);
+        };
+      })
+      .catch((err) => {
+        alert("カメラの起動に失敗しました。ブラウザの設定でカメラ利用を許可してください。");
+        console.error(err);
+      });
+    }
+
     // 画面をクリアする関数
     function clearPaint() {
       container.innerHTML = '';
     }
-
-    // エラーが起きにくい標準的なカメラ起動処理（外カメラを最優先）
-    navigator.mediaDevices.getUserMedia({ 
-      video: { 
-        facingMode: 'environment',
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      } 
-    })
-    .then((stream) => {
-      videoElement.srcObject = stream;
-      videoElement.onloadedmetadata = () => {
-        // 1秒間に30回、カメラ映像をMediaPipeに送って処理する
-        setInterval(async () => {
-          await hands.send({image: videoElement});
-        }, 1000 / 30);
-      };
-    })
-    .catch((err) => {
-      alert("カメラの起動に失敗しました。ブラウザの設定でカメラを許可してください。");
-      console.error(err);
-    });
   </script>
 </body>
 </html>
