@@ -82,4 +82,142 @@
 </head>
 <body>
 
-  <
+  <div id="start-overlay">
+    <h2>3D Space Paint AR</h2>
+    <p>人差し指で空中に描こう<br>親指と人差し指をくっつけると描画開始</p>
+    <button id="start-btn" onclick="initAR()">カメラ起動</button>
+  </div>
+
+  <div id="debug-status">準備中...</div>
+  <video id="webcam" autoplay playsinline></video>
+  <button id="clear-btn" onclick="clearPaint()">クリア</button>
+
+  <a-scene vr-mode-ui="enabled: false" embedded>
+    <a-entity id="paint-container"></a-entity>
+    <a-entity light="type: ambient; intensity: 0.8;"></a-entity>
+    <a-entity light="type: directional; intensity: 0.6; position: 1 2 1"></a-entity>
+    <a-entity camera position="0 0 0"></a-entity>
+  </a-scene>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const container = document.getElementById('paint-container');
+    const overlay = document.getElementById('start-overlay');
+    const clearBtn = document.getElementById('clear-btn');
+    const statusText = document.getElementById('debug-status');
+
+    let isDrawing = false;
+    let lastPosition = null;
+    const MAX_LINES = 200; // パフォーマンス調整
+
+    // MediaPipe Hands 設定
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 0,
+      minDetectionConfidence: 0.4,
+      minTrackingConfidence: 0.4
+    });
+
+    hands.onResults((results) => {
+      if (!results.multiHandLandmarks?.length) {
+        statusText.innerText = "手を検出待機中...";
+        lastPosition = null;
+        return;
+      }
+
+      const landmarks = results.multiHandLandmarks[0];
+      const indexTip = landmarks[8];  // 人差し指先端
+      const thumbTip = landmarks[4];  // 親指先端
+
+      // ピンチ距離計算
+      const pinchDist = Math.hypot(
+        indexTip.x - thumbTip.x,
+        indexTip.y - thumbTip.y
+      );
+
+      isDrawing = pinchDist < 0.07;   // ← この値を調整すると描画しやすさが変わります
+
+      if (!isDrawing) {
+        lastPosition = null;
+        statusText.innerText = "ピンチして描画開始 ✍️";
+        return;
+      }
+
+      // 3D座標に変換（調整可能）
+      const x = (indexTip.x - 0.5) * 3.5;
+      const y = (0.5 - indexTip.y) * 3.0;
+      const z = (indexTip.z * -6) - 1.5;   // 奥行きを活かす
+
+      const currentPos = `${x.toFixed(3)} ${y.toFixed(3)} ${z.toFixed(3)}`;
+
+      if (lastPosition) {
+        const line = document.createElement('a-entity');
+        line.setAttribute('line', {
+          start: lastPosition,
+          end: currentPos,
+          color: '#00FFCC',
+          opacity: 0.95,
+          'line-width': 8
+        });
+        container.appendChild(line);
+      }
+
+      lastPosition = currentPos;
+
+      // 古い線を削除して軽く保つ
+      if (container.children.length > MAX_LINES) {
+        container.removeChild(container.firstChild);
+      }
+
+      statusText.innerText = `描画中... Pinch:${pinchDist.toFixed(3)}`;
+    });
+
+    function initAR() {
+      overlay.style.display = 'none';
+      clearBtn.style.display = 'block';
+      statusText.innerText = "カメラ起動中...";
+
+      navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment', 
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      })
+      .then((stream) => {
+        videoElement.srcObject = stream;
+        videoElement.onloadedmetadata = () => {
+          videoElement.play();
+          
+          // MediaPipe処理ループ
+          setInterval(async () => {
+            if (videoElement.readyState >= 2) {
+              await hands.send({ image: videoElement });
+            }
+          }, 33); // 約30fps
+        };
+      })
+      .catch((err) => {
+        console.error(err);
+        statusText.innerText = "カメラエラー";
+        alert("カメラの許可が必要です");
+      });
+    }
+
+    function clearPaint() {
+      container.innerHTML = '';
+      lastPosition = null;
+      statusText.innerText = "画面をクリアしました";
+    }
+
+    // ページロード時に軽く通知
+    window.onload = () => {
+      statusText.innerText = "スタートボタンを押してください";
+    };
+  </script>
+</body>
+</html>
